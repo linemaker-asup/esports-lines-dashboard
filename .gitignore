@@ -1,0 +1,10 @@
+node_modules/
+dist/
+.vercel/
+.env
+*.log
+__pycache__/
+*.pyc
+poetry.lock
+data/
+*.csv
