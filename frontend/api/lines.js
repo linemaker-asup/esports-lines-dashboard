@@ -187,12 +187,36 @@ function normalizeName(name) {
     .replace(/\s+/g, " ");
 }
 
+function normalizeMapRange(stat) {
+  // Extract and normalize map range from stat strings
+  // Underdog: "Kills on Maps 1+2", "Kills on Maps 1+2+3"
+  // PrizePicks: "MAPS 1-2 Kills", "MAP 1 Kills", "MAP 3 Kills"
+  const s = (stat || "").toLowerCase();
+
+  // "maps 1+2+3" or "maps 1-3" → "m123"
+  if (/maps?\s*1[\+\-]2[\+\-]3/.test(s) || /maps?\s*1\s*-\s*3/.test(s)) return "m123";
+  // "maps 1+2" or "maps 1-2" → "m12"
+  if (/maps?\s*1[\+\-]2/.test(s) || /maps?\s*1\s*-\s*2/.test(s)) return "m12";
+  // "map 1" → "m1"
+  if (/map\s*1(?!\d)/.test(s)) return "m1";
+  // "map 2" → "m2"
+  if (/map\s*2(?!\d)/.test(s)) return "m2";
+  // "map 3" → "m3"
+  if (/map\s*3(?!\d)/.test(s)) return "m3";
+
+  return "";
+}
+
 function normalizeStat(stat) {
   let s = (stat || "").toLowerCase().trim();
-  s = s.replace(/\s*(?:on|in)\s+maps?\s+[\d+]+/g, "");
+  const mapRange = normalizeMapRange(s);
+  // Strip map references to get the core stat
+  s = s.replace(/\s*(?:on|in)\s+maps?\s+[\d\+\-]+/g, "");
   s = s.replace(/maps?\s+[\d\-]+\s*/g, "");
   s = s.replace(/\s*\(.*?\)/g, "");
-  return s.replace(/\s+/g, " ").trim();
+  s = s.replace(/\s+/g, " ").trim();
+  // Append normalized map range so matching is accurate
+  return mapRange ? `${s} ${mapRange}` : s;
 }
 
 // ---------------------------------------------------------------------------
