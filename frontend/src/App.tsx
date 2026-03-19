@@ -41,6 +41,7 @@ const GAME_LABELS: Record<string, string> = {
   CS2: 'Counter-Strike 2',
   DOTA2: 'Dota 2',
   VAL: 'Valorant',
+  COD: 'Call of Duty',
 }
 
 const GAME_COLORS: Record<string, string> = {
@@ -48,6 +49,7 @@ const GAME_COLORS: Record<string, string> = {
   CS2: 'bg-orange-500',
   DOTA2: 'bg-red-500',
   VAL: 'bg-violet-500',
+  COD: 'bg-green-500',
 }
 
 const GAME_BORDER_COLORS: Record<string, string> = {
@@ -55,6 +57,7 @@ const GAME_BORDER_COLORS: Record<string, string> = {
   CS2: 'border-orange-500',
   DOTA2: 'border-red-500',
   VAL: 'border-violet-500',
+  COD: 'border-green-500',
 }
 
 function GameBadge({ game }: { game: string }) {
@@ -98,7 +101,7 @@ function App() {
     setLoading(true)
     setError(null)
     try {
-      const resp = await fetch(`${API_URL}/api/lines`)
+      const resp = await fetch(`${API_URL}/api/lines?t=${Date.now()}`)
       if (!resp.ok) throw new Error(`API returned HTTP ${resp.status}`)
       const dashboard: DashboardData = await resp.json()
       setData(dashboard)
