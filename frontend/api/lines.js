@@ -115,8 +115,25 @@ async function fetchUnderdogLines() {
       });
     }
 
-    console.log(`[Underdog] Fetched ${rows.length} esports lines`);
-    return rows;
+    // Deduplicate: for each player+stat, prefer the line with H/L odds
+    const deduped = [];
+    const seen = {};
+    for (const r of rows) {
+      const key = `${r.game}||${r.player}||${r.stat}`;
+      const hasOdds = r.higher_price && r.lower_price;
+      if (!seen[key]) {
+        seen[key] = { index: deduped.length, hasOdds };
+        deduped.push(r);
+      } else if (hasOdds && !seen[key].hasOdds) {
+        // Replace the one without odds
+        deduped[seen[key].index] = r;
+        seen[key].hasOdds = true;
+      }
+      // else skip duplicate without odds
+    }
+
+    console.log(`[Underdog] Fetched ${rows.length} raw, ${deduped.length} deduped esports lines`);
+    return deduped;
   } catch (err) {
     console.error(`[Underdog] Error: ${err}`);
     return [];
