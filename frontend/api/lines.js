@@ -209,7 +209,10 @@ export default async function handler(req) {
     fetchPrizePicksLines(),
   ]);
 
-  const prizepicksLines = ppResult.lines;
+  // Filter PrizePicks to only "standard" lines (exclude Goblin/Demon variants)
+  const prizepicksLines = ppResult.lines.filter(
+    (l) => !l.odds_type || l.odds_type === "standard"
+  );
   const allLines = [...underdogLines, ...prizepicksLines];
 
   // Group by game

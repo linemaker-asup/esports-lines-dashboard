@@ -93,6 +93,7 @@ def fetch_prizepicks():
             "line": float(line_score),
             "flash_sale_line": float(attrs["flash_sale_line_score"]) if attrs.get("flash_sale_line_score") else None,
             "is_promo": attrs.get("is_promo", False),
+            "odds_type": attrs.get("odds_type", "standard"),
             "status": attrs.get("status", ""),
         })
 
