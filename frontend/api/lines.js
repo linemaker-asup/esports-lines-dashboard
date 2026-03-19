@@ -79,6 +79,14 @@ async function fetchUnderdogLines() {
       } else if (sportId === "ESPORTS") {
         const title = (gameInfo.title || "").toLowerCase();
         if (
+          ["cod:", "call of duty", "cdl"].some((x) => title.includes(x))
+        ) {
+          gameName = "COD";
+        } else if (
+          ["val:", "valorant", "vct"].some((x) => title.includes(x))
+        ) {
+          gameName = "VAL";
+        } else if (
           ["lpl", "lck", "lec", "lcs", "league", "lol"].some((x) =>
             title.includes(x)
           )
@@ -87,7 +95,7 @@ async function fetchUnderdogLines() {
         } else if (["dota", "ti "].some((x) => title.includes(x))) {
           gameName = "DOTA2";
         } else {
-          gameName = "LOL";
+          gameName = "ESPORTS";
         }
       } else if (sportId === "DOTA2") {
         gameName = "DOTA2";
