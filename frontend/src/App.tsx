@@ -60,6 +60,13 @@ const GAME_BORDER_COLORS: Record<string, string> = {
   COD: 'border-green-500',
 }
 
+function formatStatDisplay(stat: string): string {
+  // Display "Maps 1-2" as "Maps 1+2" and "Maps 1-3" as "Maps 1+2+3"
+  return stat
+    .replace(/(maps?)\s*1\s*-\s*3/gi, '$1 1+2+3')
+    .replace(/(maps?)\s*1\s*-\s*2/gi, '$1 1+2')
+}
+
 function GameBadge({ game }: { game: string }) {
   return (
     <span className={`inline-flex items-center px-2 py-0.5 rounded text-xs font-medium text-white ${GAME_COLORS[game] || 'bg-gray-500'}`}>
@@ -318,7 +325,7 @@ function App() {
                           )}
                         </td>
                         <td className="px-4 py-2.5 text-gray-400 whitespace-nowrap">{c.team}</td>
-                        <td className="px-4 py-2.5 text-gray-300 whitespace-nowrap">{c.stat}</td>
+                        <td className="px-4 py-2.5 text-gray-300 whitespace-nowrap">{formatStatDisplay(c.stat)}</td>
                         <td className="px-4 py-2.5 text-gray-500 whitespace-nowrap max-w-48 truncate">
                           {c.match}
                         </td>
