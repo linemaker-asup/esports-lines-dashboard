@@ -15,6 +15,8 @@ interface Comparison {
   prizepicks_line: number | null
   prizepicks_flash: number | null
   prizepicks_promo: boolean
+  parlayplay_line: number | null
+  parlayplay_multiplier: number | null
   diff: number | null
   matched: boolean
 }
@@ -24,6 +26,8 @@ interface Summary {
   underdog_count: number
   prizepicks_count: number
   prizepicks_available: boolean
+  parlayplay_count: number
+  parlayplay_available: boolean
   matched_count: number
   games: string[]
   fetched_at: string
@@ -205,8 +209,11 @@ function App() {
               )}
             </div>
             <div className="bg-gray-900 rounded-lg p-4 border border-gray-800">
-              <p className="text-sm text-gray-400">Matched</p>
-              <p className="text-3xl font-bold text-amber-400">{data.summary.matched_count}</p>
+              <p className="text-sm text-gray-400">ParlayPlay</p>
+              <p className="text-3xl font-bold text-cyan-400">{data.summary.parlayplay_count}</p>
+              {!data.summary.parlayplay_available && (
+                <p className="text-xs text-amber-400 mt-1">ParlayPlay proxy not configured</p>
+              )}
             </div>
           </div>
         )}
@@ -297,13 +304,14 @@ function App() {
                     <th className="text-right px-4 py-3 text-emerald-400 font-medium">Underdog</th>
                     <th className="text-center px-4 py-3 text-gray-500 font-medium text-xs">H / L</th>
                     <th className="text-right px-4 py-3 text-purple-400 font-medium">PrizePicks</th>
+                    <th className="text-right px-4 py-3 text-cyan-400 font-medium">ParlayPlay</th>
                     <th className="text-center px-4 py-3 text-gray-400 font-medium">Diff</th>
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-gray-800/50">
                   {filteredComparisons.length === 0 ? (
                     <tr>
-                      <td colSpan={9} className="px-4 py-12 text-center text-gray-500">
+                      <td colSpan={10} className="px-4 py-12 text-center text-gray-500">
                         {data?.summary.total_lines === 0
                           ? 'No esports lines currently available. Check back when games are scheduled.'
                           : 'No lines match your filters.'}
@@ -350,6 +358,20 @@ function App() {
                               {c.prizepicks_flash && (
                                 <span className="text-yellow-400 text-xs ml-1">
                                   ({c.prizepicks_flash})
+                                </span>
+                              )}
+                            </span>
+                          ) : (
+                            <span className="text-gray-600">-</span>
+                          )}
+                        </td>
+                        <td className="px-4 py-2.5 text-right font-mono">
+                          {c.parlayplay_line !== null ? (
+                            <span className="text-cyan-400 font-semibold">
+                              {c.parlayplay_line}
+                              {c.parlayplay_multiplier && (
+                                <span className="text-gray-500 text-xs ml-1">
+                                  ({c.parlayplay_multiplier}x)
                                 </span>
                               )}
                             </span>

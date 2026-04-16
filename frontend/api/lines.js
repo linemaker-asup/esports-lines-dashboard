@@ -1,6 +1,7 @@
 // Vercel Edge Function: /api/lines
-// Fetches Underdog lines directly and PrizePicks via Python proxy
-// (which uses curl_cffi TLS impersonation to bypass PerimeterX).
+// Fetches Underdog lines directly, PrizePicks via Python proxy
+// (which uses curl_cffi TLS impersonation to bypass PerimeterX),
+// and ParlayPlay via Selenium-based proxy (which bypasses Cloudflare).
 
 export const config = {
   runtime: "edge",
@@ -8,6 +9,7 @@ export const config = {
 };
 
 const UNDERDOG_URL = "https://api.underdogfantasy.com/beta/v5/over_under_lines";
+const PLP_PROXY_URL = process.env.PLP_PROXY_URL || "";
 const TARGET_SPORTS = new Set(["LOL", "CS", "DOTA2", "ESPORTS"]);
 
 // ---------------------------------------------------------------------------
@@ -177,6 +179,36 @@ async function fetchPrizePicksLines() {
 }
 
 // ---------------------------------------------------------------------------
+// ParlayPlay fetching (via Selenium-based proxy that bypasses Cloudflare)
+// ---------------------------------------------------------------------------
+async function fetchParlayPlayLines() {
+  if (!PLP_PROXY_URL) {
+    console.log("[ParlayPlay] No PLP_PROXY_URL configured, skipping");
+    return { lines: [], available: false };
+  }
+  try {
+    const resp = await fetch(`${PLP_PROXY_URL}/api/parlayplay`, {
+      headers: { Accept: "application/json" },
+      signal: AbortSignal.timeout(45000),
+    });
+    if (!resp.ok) {
+      console.error(`[ParlayPlay] Proxy HTTP ${resp.status}`);
+      return { lines: [], available: false };
+    }
+    const data = await resp.json();
+    if (!data.available) {
+      console.error(`[ParlayPlay] Proxy unavailable: ${data.error || "unknown"}`);
+      return { lines: [], available: false };
+    }
+    console.log(`[ParlayPlay] Fetched ${data.lines.length} esports lines via proxy`);
+    return { lines: data.lines, available: true };
+  } catch (err) {
+    console.error(`[ParlayPlay] Error: ${err}`);
+    return { lines: [], available: false };
+  }
+}
+
+// ---------------------------------------------------------------------------
 // Normalization for cross-platform matching
 // ---------------------------------------------------------------------------
 function normalizeName(name) {
@@ -235,17 +267,19 @@ export default async function handler(req) {
     return new Response(null, { status: 200, headers });
   }
 
-  // Fetch both platforms in parallel
-  const [underdogLines, ppResult] = await Promise.all([
+  // Fetch all platforms in parallel
+  const [underdogLines, ppResult, plpResult] = await Promise.all([
     fetchUnderdogLines(),
     fetchPrizePicksLines(),
+    fetchParlayPlayLines(),
   ]);
 
   // Filter PrizePicks to only "standard" lines (exclude Goblin/Demon variants)
   const prizepicksLines = ppResult.lines.filter(
     (l) => !l.odds_type || l.odds_type === "standard"
   );
-  const allLines = [...underdogLines, ...prizepicksLines];
+  const parlayplayLines = plpResult.lines || [];
+  const allLines = [...underdogLines, ...prizepicksLines, ...parlayplayLines];
 
   // Group by game
   const byGame = {};
@@ -259,88 +293,126 @@ export default async function handler(req) {
   for (const [game, lines] of Object.entries(byGame)) {
     const udLines = lines.filter((l) => l.platform === "Underdog");
     const ppLines = lines.filter((l) => l.platform === "PrizePicks");
+    const plpLines = lines.filter((l) => l.platform === "ParlayPlay");
 
-    const udIndex = {};
-    for (const l of udLines) {
-      const key = normalizeName(l.player) + "||" + normalizeStat(l.stat);
-      if (!udIndex[key]) udIndex[key] = [];
-      udIndex[key].push(l);
-    }
-
-    const ppIndex = {};
-    for (const l of ppLines) {
-      const key = normalizeName(l.player) + "||" + normalizeStat(l.stat);
-      if (!ppIndex[key]) ppIndex[key] = [];
-      ppIndex[key].push(l);
-    }
-
-    const matchedPpKeys = new Set();
-    for (const [key, udEntries] of Object.entries(udIndex)) {
-      const ppEntries = ppIndex[key] || [];
-      if (ppEntries.length > 0) {
-        matchedPpKeys.add(key);
-        for (const ud of udEntries) {
-          for (const pp of ppEntries) {
-            comparisons.push({
-              game,
-              player: ud.player,
-              team: ud.team || pp.team || "",
-              stat: ud.stat,
-              match: ud.match || pp.match || "",
-              scheduled: ud.scheduled || pp.scheduled || "",
-              underdog_line: ud.line,
-              underdog_higher: ud.higher_price || "",
-              underdog_lower: ud.lower_price || "",
-              prizepicks_line: pp.line,
-              prizepicks_flash: pp.flash_sale_line || null,
-              prizepicks_promo: pp.is_promo || false,
-              diff: Math.round((ud.line - pp.line) * 100) / 100,
-              matched: true,
-            });
-          }
-        }
-      } else {
-        for (const ud of udEntries) {
-          comparisons.push({
-            game,
-            player: ud.player,
-            team: ud.team || "",
-            stat: ud.stat,
-            match: ud.match || "",
-            scheduled: ud.scheduled || "",
-            underdog_line: ud.line,
-            underdog_higher: ud.higher_price || "",
-            underdog_lower: ud.lower_price || "",
-            prizepicks_line: null,
-            prizepicks_flash: null,
-            prizepicks_promo: false,
-            diff: null,
-            matched: false,
-          });
-        }
+    // Build indexes by normalized player+stat key
+    const buildIndex = (arr) => {
+      const idx = {};
+      for (const l of arr) {
+        const key = normalizeName(l.player) + "||" + normalizeStat(l.stat);
+        if (!idx[key]) idx[key] = [];
+        idx[key].push(l);
       }
-    }
+      return idx;
+    };
 
-    for (const [key, ppEntries] of Object.entries(ppIndex)) {
-      if (!matchedPpKeys.has(key)) {
-        for (const pp of ppEntries) {
-          comparisons.push({
-            game,
-            player: pp.player,
-            team: pp.team || "",
-            stat: pp.stat,
-            match: pp.match || "",
-            scheduled: pp.scheduled || "",
-            underdog_line: null,
-            underdog_higher: null,
-            underdog_lower: null,
-            prizepicks_line: pp.line,
-            prizepicks_flash: pp.flash_sale_line || null,
-            prizepicks_promo: pp.is_promo || false,
-            diff: null,
-            matched: false,
-          });
-        }
+    const udIndex = buildIndex(udLines);
+    const ppIndex = buildIndex(ppLines);
+    const plpIndex = buildIndex(plpLines);
+
+    // Collect all unique keys across all platforms
+    const allKeys = new Set([
+      ...Object.keys(udIndex),
+      ...Object.keys(ppIndex),
+      ...Object.keys(plpIndex),
+    ]);
+
+    for (const key of allKeys) {
+      const udEntries = udIndex[key] || [];
+      const ppEntries = ppIndex[key] || [];
+      const plpEntries = plpIndex[key] || [];
+
+      // Determine the "best" representative from each platform
+      const ud = udEntries[0] || null;
+      const pp = ppEntries[0] || null;
+      const plp = plpEntries[0] || null;
+
+      // Pick player/team/match/scheduled from whichever platform has data
+      const rep = ud || pp || plp;
+      const hasMultiple = (ud ? 1 : 0) + (pp ? 1 : 0) + (plp ? 1 : 0) >= 2;
+
+      const udPpDiff = (ud && pp) ? Math.round((ud.line - pp.line) * 100) / 100 : null;
+
+      comparisons.push({
+        game,
+        player: rep.player,
+        team: ud?.team || pp?.team || plp?.team || "",
+        stat: rep.stat,
+        match: ud?.match || pp?.match || plp?.match || "",
+        scheduled: ud?.scheduled || pp?.scheduled || plp?.scheduled || "",
+        underdog_line: ud ? ud.line : null,
+        underdog_higher: ud?.higher_price || "",
+        underdog_lower: ud?.lower_price || "",
+        prizepicks_line: pp ? pp.line : null,
+        prizepicks_flash: pp?.flash_sale_line || null,
+        prizepicks_promo: pp?.is_promo || false,
+        parlayplay_line: plp ? plp.line : null,
+        parlayplay_multiplier: plp?.over_multiplier || null,
+        diff: udPpDiff,
+        matched: hasMultiple,
+      });
+
+      // If a platform has multiple distinct lines for the same key,
+      // add the extra entries as separate rows
+      for (const extraUd of udEntries.slice(1)) {
+        comparisons.push({
+          game,
+          player: extraUd.player,
+          team: extraUd.team || "",
+          stat: extraUd.stat,
+          match: extraUd.match || "",
+          scheduled: extraUd.scheduled || "",
+          underdog_line: extraUd.line,
+          underdog_higher: extraUd.higher_price || "",
+          underdog_lower: extraUd.lower_price || "",
+          prizepicks_line: null,
+          prizepicks_flash: null,
+          prizepicks_promo: false,
+          parlayplay_line: null,
+          parlayplay_multiplier: null,
+          diff: null,
+          matched: false,
+        });
+      }
+      for (const extraPp of ppEntries.slice(1)) {
+        comparisons.push({
+          game,
+          player: extraPp.player,
+          team: extraPp.team || "",
+          stat: extraPp.stat,
+          match: extraPp.match || "",
+          scheduled: extraPp.scheduled || "",
+          underdog_line: null,
+          underdog_higher: null,
+          underdog_lower: null,
+          prizepicks_line: extraPp.line,
+          prizepicks_flash: extraPp.flash_sale_line || null,
+          prizepicks_promo: extraPp.is_promo || false,
+          parlayplay_line: null,
+          parlayplay_multiplier: null,
+          diff: null,
+          matched: false,
+        });
+      }
+      for (const extraPlp of plpEntries.slice(1)) {
+        comparisons.push({
+          game,
+          player: extraPlp.player,
+          team: extraPlp.team || "",
+          stat: extraPlp.stat,
+          match: extraPlp.match || "",
+          scheduled: extraPlp.scheduled || "",
+          underdog_line: null,
+          underdog_higher: null,
+          underdog_lower: null,
+          prizepicks_line: null,
+          prizepicks_flash: null,
+          prizepicks_promo: false,
+          parlayplay_line: extraPlp.line,
+          parlayplay_multiplier: extraPlp.over_multiplier || null,
+          diff: null,
+          matched: false,
+        });
       }
     }
   }
@@ -358,6 +430,8 @@ export default async function handler(req) {
     underdog_count: underdogLines.length,
     prizepicks_count: prizepicksLines.length,
     prizepicks_available: ppResult.available,
+    parlayplay_count: parlayplayLines.length,
+    parlayplay_available: plpResult.available,
     matched_count: comparisons.filter((c) => c.matched).length,
     games: Object.keys(byGame).sort(),
     fetched_at: new Date().toISOString(),
