@@ -1,0 +1,10 @@
+{
+  "name": "plp-node",
+  "version": "1.0.0",
+  "description": "ParlayPlay esports lines proxy using Puppeteer on Vercel",
+  "private": true,
+  "dependencies": {
+    "@sparticuz/chromium": "^131.0.0",
+    "puppeteer-core": "^23.0.0"
+  }
+}
