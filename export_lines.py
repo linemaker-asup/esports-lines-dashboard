@@ -1,12 +1,13 @@
 #!/usr/bin/env python3
 """
-Fetch esports lines from Underdog Fantasy and PrizePicks, then save to CSV.
+Fetch esports lines from Underdog Fantasy, PrizePicks, and ParlayPlay, then save to CSV.
 
 Usage:
     python export_lines.py                  # Save all lines to data/esports_lines.csv
     python export_lines.py --output my.csv  # Custom output path
     python export_lines.py --game LOL       # Filter by game (LOL, CS2, DOTA2, VAL)
     python export_lines.py --matched-only   # Only export matched lines (on both platforms)
+    python export_lines.py --plp-url URL    # ParlayPlay proxy URL (optional)
 """
 
 import argparse
@@ -22,6 +23,7 @@ from urllib.error import URLError
 
 UNDERDOG_URL = "https://api.underdogfantasy.com/beta/v5/over_under_lines"
 PP_PROXY_URL = "https://pp-python.vercel.app/api/prizepicks"
+PLP_PROXY_URL = os.environ.get("PLP_PROXY_URL", "")
 
 TARGET_SPORTS = {"LOL", "CS", "DOTA2", "ESPORTS"}
 
@@ -147,6 +149,25 @@ def fetch_prizepicks_lines():
         return [], False
 
 
+def fetch_parlayplay_lines(proxy_url):
+    """Fetch esports lines from ParlayPlay via the Selenium-based proxy."""
+    if not proxy_url:
+        print("[ParlayPlay] No proxy URL configured, skipping")
+        return [], False
+    print("[ParlayPlay] Fetching lines via proxy...")
+    try:
+        data = fetch_json(f"{proxy_url}/api/parlayplay", timeout=60)
+        if not data.get("available"):
+            print(f"[ParlayPlay] Unavailable: {data.get('error', 'unknown')}")
+            return [], False
+        lines = data.get("lines", [])
+        print(f"[ParlayPlay] Found {len(lines)} esports lines")
+        return lines, True
+    except (URLError, json.JSONDecodeError) as e:
+        print(f"[ParlayPlay] Error: {e}")
+        return [], False
+
+
 def normalize_name(name):
     """Normalize player name for matching."""
     import re
@@ -163,9 +184,9 @@ def normalize_stat(stat):
     return re.sub(r"\s+", " ", s).strip()
 
 
-def build_comparisons(underdog_lines, pp_lines):
+def build_comparisons(underdog_lines, pp_lines, plp_lines=None):
     """Match lines across platforms and build comparison rows."""
-    all_lines = underdog_lines + pp_lines
+    all_lines = underdog_lines + pp_lines + (plp_lines or [])
     by_game = {}
     for line in all_lines:
         game = line.get("game", "")
@@ -177,79 +198,52 @@ def build_comparisons(underdog_lines, pp_lines):
     for game, lines in by_game.items():
         ud_lines = [l for l in lines if l.get("platform") == "Underdog"]
         pp_game = [l for l in lines if l.get("platform") == "PrizePicks"]
+        plp_game = [l for l in lines if l.get("platform") == "ParlayPlay"]
 
-        ud_index = {}
-        for l in ud_lines:
-            key = f"{normalize_name(l['player'])}||{normalize_stat(l['stat'])}"
-            ud_index.setdefault(key, []).append(l)
+        def build_index(arr):
+            idx = {}
+            for l in arr:
+                key = f"{normalize_name(l['player'])}||{normalize_stat(l['stat'])}"
+                idx.setdefault(key, []).append(l)
+            return idx
 
-        pp_index = {}
-        for l in pp_game:
-            key = f"{normalize_name(l['player'])}||{normalize_stat(l['stat'])}"
-            pp_index.setdefault(key, []).append(l)
+        ud_index = build_index(ud_lines)
+        pp_index = build_index(pp_game)
+        plp_index = build_index(plp_game)
 
-        matched_pp_keys = set()
-        for key, ud_entries in ud_index.items():
+        all_keys = set(list(ud_index.keys()) + list(pp_index.keys()) + list(plp_index.keys()))
+
+        for key in all_keys:
+            ud_entries = ud_index.get(key, [])
             pp_entries = pp_index.get(key, [])
-            if pp_entries:
-                matched_pp_keys.add(key)
-                for ud in ud_entries:
-                    for pp in pp_entries:
-                        diff = round(ud["line"] - pp["line"], 2)
-                        comparisons.append({
-                            "game": game,
-                            "player": ud["player"],
-                            "team": ud.get("team") or pp.get("team", ""),
-                            "stat": ud["stat"],
-                            "match": ud.get("match") or pp.get("match", ""),
-                            "scheduled": ud.get("scheduled") or pp.get("scheduled", ""),
-                            "underdog_line": ud["line"],
-                            "underdog_higher": ud.get("higher_price", ""),
-                            "underdog_lower": ud.get("lower_price", ""),
-                            "prizepicks_line": pp["line"],
-                            "prizepicks_flash": pp.get("flash_sale_line"),
-                            "prizepicks_promo": pp.get("is_promo", False),
-                            "diff": diff,
-                            "matched": True,
-                        })
-            else:
-                for ud in ud_entries:
-                    comparisons.append({
-                        "game": game,
-                        "player": ud["player"],
-                        "team": ud.get("team", ""),
-                        "stat": ud["stat"],
-                        "match": ud.get("match", ""),
-                        "scheduled": ud.get("scheduled", ""),
-                        "underdog_line": ud["line"],
-                        "underdog_higher": ud.get("higher_price", ""),
-                        "underdog_lower": ud.get("lower_price", ""),
-                        "prizepicks_line": "",
-                        "prizepicks_flash": "",
-                        "prizepicks_promo": "",
-                        "diff": "",
-                        "matched": False,
-                    })
+            plp_entries = plp_index.get(key, [])
 
-        for key, pp_entries in pp_index.items():
-            if key not in matched_pp_keys:
-                for pp in pp_entries:
-                    comparisons.append({
-                        "game": game,
-                        "player": pp["player"],
-                        "team": pp.get("team", ""),
-                        "stat": pp["stat"],
-                        "match": pp.get("match", ""),
-                        "scheduled": pp.get("scheduled", ""),
-                        "underdog_line": "",
-                        "underdog_higher": "",
-                        "underdog_lower": "",
-                        "prizepicks_line": pp["line"],
-                        "prizepicks_flash": pp.get("flash_sale_line", ""),
-                        "prizepicks_promo": pp.get("is_promo", False),
-                        "diff": "",
-                        "matched": False,
-                    })
+            ud = ud_entries[0] if ud_entries else None
+            pp = pp_entries[0] if pp_entries else None
+            plp = plp_entries[0] if plp_entries else None
+            rep = ud or pp or plp
+
+            has_multiple = (1 if ud else 0) + (1 if pp else 0) + (1 if plp else 0) >= 2
+            ud_pp_diff = round(ud["line"] - pp["line"], 2) if (ud and pp) else ""
+
+            comparisons.append({
+                "game": game,
+                "player": rep["player"],
+                "team": (ud or pp or plp or {}).get("team", ""),
+                "stat": rep["stat"],
+                "match": (ud or pp or plp or {}).get("match", ""),
+                "scheduled": (ud or pp or plp or {}).get("scheduled", ""),
+                "underdog_line": ud["line"] if ud else "",
+                "underdog_higher": ud.get("higher_price", "") if ud else "",
+                "underdog_lower": ud.get("lower_price", "") if ud else "",
+                "prizepicks_line": pp["line"] if pp else "",
+                "prizepicks_flash": pp.get("flash_sale_line", "") if pp else "",
+                "prizepicks_promo": pp.get("is_promo", False) if pp else "",
+                "parlayplay_line": plp["line"] if plp else "",
+                "parlayplay_multiplier": plp.get("over_multiplier", "") if plp else "",
+                "diff": ud_pp_diff,
+                "matched": has_multiple,
+            })
 
     comparisons.sort(key=lambda c: (not c["matched"], c["game"], c["player"], c["stat"]))
     return comparisons
@@ -259,6 +253,7 @@ CSV_FIELDS = [
     "game", "player", "team", "stat", "match", "scheduled",
     "underdog_line", "underdog_higher", "underdog_lower",
     "prizepicks_line", "prizepicks_flash", "prizepicks_promo",
+    "parlayplay_line", "parlayplay_multiplier",
     "diff", "matched",
 ]
 
@@ -268,14 +263,17 @@ def main():
     parser.add_argument("--output", "-o", default=None, help="Output CSV path (default: data/esports_lines_YYYYMMDD_HHMMSS.csv)")
     parser.add_argument("--game", "-g", default=None, choices=["LOL", "CS2", "DOTA2", "VAL"], help="Filter by game")
     parser.add_argument("--matched-only", "-m", action="store_true", help="Only export matched lines")
+    parser.add_argument("--plp-url", default=None, help="ParlayPlay proxy URL (e.g. http://localhost:8787)")
     args = parser.parse_args()
 
-    # Fetch from both platforms
+    # Fetch from all platforms
     underdog_lines = fetch_underdog_lines()
     pp_lines, pp_available = fetch_prizepicks_lines()
+    plp_url = args.plp_url or PLP_PROXY_URL
+    plp_lines, plp_available = fetch_parlayplay_lines(plp_url)
 
     # Build comparisons
-    comparisons = build_comparisons(underdog_lines, pp_lines)
+    comparisons = build_comparisons(underdog_lines, pp_lines, plp_lines)
 
     # Apply filters
     if args.game:
@@ -304,7 +302,7 @@ def main():
 
     print(f"\nExported {total} lines ({matched} matched) to {output_path}")
     print(f"Games: {', '.join(games)}")
-    print(f"Underdog: {len(underdog_lines)} | PrizePicks: {len(pp_lines)} ({'available' if pp_available else 'unavailable'})")
+    print(f"Underdog: {len(underdog_lines)} | PrizePicks: {len(pp_lines)} ({'available' if pp_available else 'unavailable'}) | ParlayPlay: {len(plp_lines)} ({'available' if plp_available else 'unavailable'})")
 
 
 if __name__ == "__main__":
